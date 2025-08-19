@@ -1,0 +1,22 @@
+# Webスクレイピング用
+beautifulsoup4
+requests
+
+# RAGデータ処理用 
+langchain
+langchain-community
+langchain-huggingface
+langchain-text-splitters
+langchain-chroma
+
+# ベクトル化とベクトルストア用
+sentence-transformers
+chromadb
+transformers
+llama-cpp-python
+
+# UI
+streamlit
+
+# ユーティリティ
+tqdm  

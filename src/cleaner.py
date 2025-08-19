@@ -1,0 +1,102 @@
+import json
+import re
+import random
+from pathlib import Path
+import os
+import unicodedata
+from tqdm import tqdm # tqdmをインポート
+
+def parse_japanese_date(text):
+    if not isinstance(text, str): return None
+    text = text.translate(str.maketrans('０１２３４５６７８９', '0123456789'))
+    eras = {
+        '明治': 1868 - 1, '大正': 1912 - 1, '昭和': 1926 - 1,
+        '平成': 1989 - 1, '令和': 2019 - 1,
+    }
+    match = re.search(r'(明治|大正|昭和|平成|令和)\s*(\d+|元)\s*年\s*(\d+)\s*月\s*(\d+)\s*日', text)
+    if not match: return None
+    era, year_str, month, day = match.groups()
+    year = 1 if year_str == '元' else int(year_str)
+    seireki_year = eras[era] + year
+    return f"{seireki_year:04d}-{int(month):02d}-{int(day):02d}"
+
+def structure_committee_members(text):
+    if not text or not isinstance(text, str): return []
+    members = [name.replace('委員', '').strip() for name in text.split('、')]
+    return members
+
+def clean_text_content(text):
+    if not isinstance(text, str): return ""
+    text = unicodedata.normalize('NFKC', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    text = re.sub(r'（以下「法」という。）', '', text)
+    return text
+
+def clean_data(input_path, output_path, sample_size=None):
+    input_file = Path(input_path)
+    output_file = Path(output_path)
+    if not input_file.exists():
+        print(f"エラー: 入力ファイルが見つかりません: {input_file}")
+        return
+    with open(input_file, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    if sample_size and len(data) > sample_size:
+        print(f"全{len(data)}件から{sample_size}件をランダムにサンプリングします...")
+        data = random.sample(data, sample_size)
+    
+    cleaned_data = []
+    # --- tqdmを使った進捗バーの追加 ---
+    for record in tqdm(data, desc="データクリーニング中"):
+        new_record = {}
+        
+        # 必須メタデータを引き継ぐ
+        new_record['URL'] = record.get('URL', '')
+        agency = record.get('諮問庁', '')
+        case_name = record.get('事件名', '')
+        new_record['諮問庁'] = agency
+        new_record['事件名'] = case_name
+
+        # 日付と委員を処理
+        new_record['諮問日_iso'] = parse_japanese_date(record.get('諮問日', ''))
+        new_record['答申日_iso'] = parse_japanese_date(record.get('答申日', ''))
+        new_record['委員'] = structure_committee_members(record.get('委員', ''))
+        
+        # テキスト本文のクリーニングと戦略的なフィールド作成
+        conclusion = clean_text_content(record.get("第１_審査会の結論", ""))
+        reason = clean_text_content(record.get("第５_審査会の判断の理由", ""))
+        
+        # 1. summary_text に事件名と諮問庁を追加
+        new_record['summary_text'] = (
+            f"事件名：{case_name}\n"
+            f"諮問庁：{agency}\n\n"
+            f"結論：{conclusion}\n\n"
+            f"判断の理由：{reason}"
+        )
+        
+        # 2. detail_texts の内容を主張に絞り込む
+        detail_texts = {}
+        detail_keys = [
+            "第２_審査請求人の主張の要旨",
+            "第３_諮問庁の説明の要旨",
+            "参加人の主張の要旨"
+        ]
+        for key in detail_keys:
+            content = clean_text_content(record.get(key, ""))
+            if content:
+                detail_texts[key] = content
+        new_record['detail_texts'] = detail_texts
+        
+        cleaned_data.append(new_record)
+
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_file, 'w', encoding='utf-8') as f:
+        json.dump(cleaned_data, f, ensure_ascii=False, indent=2)
+        
+    print(f"クリーニングが正常に完了しました。'{output_file}' を確認してください。")
+
+if __name__ == '__main__':
+    INPUT_JSON_PATH = 'outputs/toshin_data.json' 
+    OUTPUT_JSON_PATH = 'outputs/cleaned_toshin_data.json'
+    SAMPLE_COUNT = None
+    
+    clean_data(INPUT_JSON_PATH, OUTPUT_JSON_PATH, sample_size=SAMPLE_COUNT)
