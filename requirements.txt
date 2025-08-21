@@ -20,3 +20,6 @@ streamlit
 
 # ユーティリティ
 tqdm  
+
+# 分析
+matplotlib

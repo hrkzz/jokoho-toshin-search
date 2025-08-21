@@ -4,7 +4,7 @@ import random
 from pathlib import Path
 import os
 import unicodedata
-from tqdm import tqdm # tqdmをインポート
+from tqdm import tqdm
 
 def parse_japanese_date(text):
     if not isinstance(text, str): return None
@@ -20,10 +20,48 @@ def parse_japanese_date(text):
     seireki_year = eras[era] + year
     return f"{seireki_year:04d}-{int(month):02d}-{int(day):02d}"
 
-def structure_committee_members(text):
-    if not text or not isinstance(text, str): return []
-    members = [name.replace('委員', '').strip() for name in text.split('、')]
-    return members
+def structure_committee_members(committee_data):
+    """
+    委員リストを整形する改善版関数（最終版）。
+    入力データの形式を判断し、最適な方法で処理するハイブリッドアプローチを採用。
+    """
+    if not committee_data:
+        return []
+
+    potential_names = []
+    # --- データ形式に応じた処理の分岐 ---
+    if isinstance(committee_data, str):
+        # ケースA: 単一の文字列で、改行を含む場合 -> 最初の1行目のみを対象とする
+        if '\n' in committee_data:
+            first_line = committee_data.split('\n', 1)[0]
+            potential_names = re.split(r'[、，]+', first_line)
+        # ケースB: 単一の文字列だが改行を含まない場合 -> 全体を対象とする
+        else:
+            potential_names = re.split(r'[、，]+', committee_data)
+    # ケースC: 文字列のリストの場合 -> 各要素を処理
+    elif isinstance(committee_data, list):
+        for item in committee_data:
+            if isinstance(item, str):
+                # 各要素をさらに読点やカンマで分割する
+                potential_names.extend(re.split(r'[、，]+', item))
+    else:
+        # 未知のデータ形式の場合は空リストを返す
+        return []
+
+    # --- 共通のクリーンアップ処理 ---
+    cleaned_members = []
+    for name in potential_names:
+        # "委員"という接頭辞や前後の空白を除去
+        processed_name = name.replace('委員', '').strip()
+        # 姓と名の間に存在する可能性のある空白（全角/半角）も除去
+        processed_name = re.sub(r'\s+', '', processed_name)
+
+        # 空文字列でなければリストに追加
+        if processed_name:
+            cleaned_members.append(processed_name)
+
+    # 重複を除去して返す
+    return list(set(cleaned_members))
 
 def clean_text_content(text):
     if not isinstance(text, str): return ""
@@ -45,27 +83,22 @@ def clean_data(input_path, output_path, sample_size=None):
         data = random.sample(data, sample_size)
     
     cleaned_data = []
-    # --- tqdmを使った進捗バーの追加 ---
     for record in tqdm(data, desc="データクリーニング中"):
         new_record = {}
         
-        # 必須メタデータを引き継ぐ
         new_record['URL'] = record.get('URL', '')
         agency = record.get('諮問庁', '')
         case_name = record.get('事件名', '')
         new_record['諮問庁'] = agency
         new_record['事件名'] = case_name
 
-        # 日付と委員を処理
         new_record['諮問日_iso'] = parse_japanese_date(record.get('諮問日', ''))
         new_record['答申日_iso'] = parse_japanese_date(record.get('答申日', ''))
-        new_record['委員'] = structure_committee_members(record.get('委員', ''))
+        new_record['委員'] = structure_committee_members(record.get('委員', []))
         
-        # テキスト本文のクリーニングと戦略的なフィールド作成
         conclusion = clean_text_content(record.get("第１_審査会の結論", ""))
         reason = clean_text_content(record.get("第５_審査会の判断の理由", ""))
         
-        # 1. summary_text に事件名と諮問庁を追加
         new_record['summary_text'] = (
             f"事件名：{case_name}\n"
             f"諮問庁：{agency}\n\n"
@@ -73,7 +106,6 @@ def clean_data(input_path, output_path, sample_size=None):
             f"判断の理由：{reason}"
         )
         
-        # 2. detail_texts の内容を主張に絞り込む
         detail_texts = {}
         detail_keys = [
             "第２_審査請求人の主張の要旨",
@@ -95,7 +127,7 @@ def clean_data(input_path, output_path, sample_size=None):
     print(f"クリーニングが正常に完了しました。'{output_file}' を確認してください。")
 
 if __name__ == '__main__':
-    INPUT_JSON_PATH = 'outputs/toshin_data.json' 
+    INPUT_JSON_PATH = 'outputs/toshin_data.json'  
     OUTPUT_JSON_PATH = 'outputs/cleaned_toshin_data.json'
     SAMPLE_COUNT = None
     
